@@ -1,1 +1,1 @@
-# python-project_app-develop
+# 파이썬 과제 앱만들기
