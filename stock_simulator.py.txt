@@ -1,0 +1,472 @@
+# -*- coding: utf-8 -*-
+"""
+나만의 주식 가상 투자 시뮬레이터 (Stock Investment Simulator)
+- 대학교 과제 발표용으로 제작된 파이썬 Tkinter GUI 프로그램입니다.
+- 실제 야후 파이낸스(yfinance) 라이브러리를 연동하여 최신 시장가를 실시간으로 반영합니다.
+- Matplotlib 그래프를 연동하여 거래가 발생할 때마다 자산 변동 추이가 동적으로 업데이트됩니다.
+"""
+
+import sys
+import tkinter as tk
+from tkinter import messagebox, ttk
+import yfinance as yf
+
+# Matplotlib 그래프를 Tkinter GUI 환경에 삽입하기 위해 백엔드와 피규어 객체를 임포트합니다.
+import matplotlib
+matplotlib.use("TkAgg")  # GUI 드로잉 능력이 탁월한 TkAgg 백엔드로 강제 구성합니다.
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+# 한글 깨짐을 완전히 차단하기 위해 맑은 고딕(Malgun Gothic) 폰트를 그래프에 설정합니다.
+from matplotlib import rc
+rc('font', family='Malgun Gothic')
+# 그래프에서 눈금의 마이너스(-) 기호가 사각형 박스로 깨지는 문제를 예방합니다.
+matplotlib.rcParams['axes.unicode_minus'] = False
+
+class StockSimulator:
+    def __init__(self, root):
+        # 1. 메인 윈도우 창 기본 인스턴스를 저장하고 설정합니다.
+        self.root = root
+        self.root.title("나만의 주식 가상 투자 시뮬레이터 (발표용)")
+        self.root.geometry("1150x700")  # 화면 크기를 넉넉하게 설정해 가독성을 높입니다.
+        self.root.configure(bg="#f8f9fa")  # 최신 스타일의 아주 연하고 세련된 그레이 계열 배경색을 적용합니다.
+
+        # 2. 투자 시뮬레이션의 핵심 자산 데이터 변수들을 생성합니다.
+        self.cash = 10000000  # 가상 시드머니 초기값: 10,000,000원(원화)으로 세팅합니다.
+        self.portfolio = {}   # 보유 주식을 기록할 딕셔너리 저장소 (예: {'AAPL': {'shares': 10, 'avg_price': 210000}})
+        
+        # 3. 우측 Matplotlib 그래프에 기록될 자산 변동 히스토리 목록들입니다.
+        self.asset_history = [10000000]  # 첫 시작 시점의 자산 총액은 시드머니(1천만 원)와 같습니다.
+        self.time_steps = [0]            # 첫 시작 순번(0회차 거래)을 X축 데이터로 등록합니다.
+        self.trade_counter = 0           # 거래(매수, 매도, 조회 등) 발생 횟수를 추적하는 카운터입니다.
+
+        # 4. 조회 대상 주식의 데이터를 임시로 담을 구조체 정보입니다.
+        self.current_ticker = ""       # 검색창에 입력받은 주식의 대문자 티커 이름입니다.
+        self.current_price_usd = 0.0   # 야후 파이낸스(yfinance)가 전달해 준 원본 달러($) 가격입니다.
+        self.current_price_krw = 0.0   # 고정 원/달러 환율을 곱해 산출한 원화(₩) 기준 현재가입니다.
+        
+        # 5. 미국 주가(USD)를 표시하기 위해 필요한 기본 환율 변수입니다.
+        self.usd_to_krw = 1350.0  # 1달러당 1,350원을 정적 평균 환율로 가정해 변환합니다.
+
+        # 6. 전반적인 레이아웃 테마(Ttk Style)를 modern 스타일로 커스텀 튜닝합니다.
+        self.init_styles()
+
+        # 7. 전체 UI 위젯들의 세부 배치를 전담할 내부 서브루틴을 호출합니다.
+        self.setup_ui()
+
+        # 8. 앱 기동과 동시에 화면상의 자산 수치 패널을 초기 데이터로 빌드해 둡니다.
+        self.update_assets_balance()
+
+        # 9. 최초 자산 궤적(1000만 원 한 점)을 담은 캔버스를 우측 그래프 영역 부근에 첫 렌더링합니다.
+        self.update_matplotlib_chart()
+
+    def init_styles(self):
+        """ Tkinter의 modern 위젯(Ttk)들의 디테일한 스타일과 배색을 규정해 주는 메커니즘입니다. """
+        self.style = ttk.Style()
+        # 테마를 기본 clam 또는 native로 설정하여 호환성을 확보합니다.
+        self.style.theme_use("clam")
+        
+        # Frame 배경 테마 색상 설정
+        self.style.configure("TFrame", background="#f8f9fa")
+        
+        # 폰트, 정렬, 색상을 정돈한 버튼 전용 스타일 선언
+        self.style.configure("Primary.TButton", font=("맑은 고딕", 10, "bold"), foreground="white", background="#0d6efd", borderwidth=1)
+        self.style.map("Primary.TButton", background=[("active", "#0b5ed7")])
+        
+        self.style.configure("AccentBuy.TButton", font=("맑은 고딕", 11, "bold"), foreground="white", background="#dc3545", borderwidth=1)
+        self.style.map("AccentBuy.TButton", background=[("active", "#bb2d3b")])
+        
+        self.style.configure("AccentSell.TButton", font=("맑은 고딕", 11, "bold"), foreground="white", background="#198754", borderwidth=1)
+        self.style.map("AccentSell.TButton", background=[("active", "#157347")])
+
+        # 자산 상황 표시판 라벨들의 가독성 향상 스타일
+        self.style.configure("Title.TLabel", font=("맑은 고딕", 16, "bold"), background="#f8f9fa", foreground="#212529")
+        self.style.configure("Info.TLabel", font=("맑은 고딕", 10), background="#f8f9fa", foreground="#495057")
+        self.style.configure("Value.TLabel", font=("맑은 고딕", 11, "bold"), background="#ffffff", relief="solid", borderwidth=1)
+
+    def setup_ui(self):
+        """ 전체 윈도우 화면을 2개의 구역(좌측 제어 패널, 우측 자산 그래프)으로 바둑판처럼 정밀 분할 배치합니다. """
+        # 메인 좌우 뼈대 프레임 생성
+        self.left_panel = ttk.Frame(self.root, style="TFrame", padding=15)
+        self.left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.right_panel = ttk.Frame(self.root, style="TFrame", padding=15)
+        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # -------------------------------------------------------------
+        # [좌측 영역 1] : 종목 및 티커 입력/검색 패널 (상단 배너 역할)
+        # -------------------------------------------------------------
+        search_lf = ttk.LabelFrame(self.left_panel, text=" [1] 실시간 종목 정보 조회 및 가격 연동 ", padding=12)
+        search_lf.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(search_lf, text="주식 티커 입력:", font=("맑은 고딕", 10)).pack(side=tk.LEFT, padx=(5, 5))
+        
+        # 티커(상태 변수) 입력을 유도하는 텍스트 필드 생성
+        self.ticker_entry = ttk.Entry(search_lf, font=("맑은 고딕", 11), width=12)
+        self.ticker_entry.insert(0, "AAPL")  # 기본값으로 세계적인 대장주인 애플(AAPL)을 채워 둡니다.
+        self.ticker_entry.pack(side=tk.LEFT, padx=5)
+
+        # 실시간 시세 조회 이벤트 트리거 버튼 배치
+        self.search_btn = ttk.Button(search_lf, text="실시간 주가 조회 🔍", style="Primary.TButton", command=self.fetch_stock_price)
+        self.search_btn.pack(side=tk.LEFT, padx=8)
+
+        # 현재 수신된 해당 종목의 가격 단가를 동적으로 화면에 안내해 줄 라벨틀입니다.
+        self.stock_status_label = ttk.Label(search_lf, text="종목을 조회해 주세요. (예: MSFT, TSLA, NVDA)", font=("맑은 고딕", 10, "bold"), foreground="#6c757d")
+        self.stock_status_label.pack(side=tk.LEFT, padx=(10, 5))
+
+        # -------------------------------------------------------------
+        # [좌측 영역 2] : 투자자의 개인 자산 요약 표시판 (중간 배너 역할)
+        # -------------------------------------------------------------
+        assets_lf = ttk.LabelFrame(self.left_panel, text=" [2] 내 가상 자산 상세 현황판 ", padding=12)
+        assets_lf.pack(fill=tk.X, pady=10)
+
+        # 그리드 매트릭스를 사용하여 자산 계좌 상태 정보를 정갈하게 표시합니다.
+        # 가용 예수금 (보유 현금) 행 배치
+        ttk.Label(assets_lf, text="가용 현금 잔고 (KRW):", font=("맑은 고딕", 10)).grid(row=0, column=0, sticky=tk.W, pady=6, padx=5)
+        self.cash_val_lbl = ttk.Label(assets_lf, text="10,000,000 원", font=("맑은 고딕", 11, "bold"), foreground="#000000", width=22, anchor=tk.E, background="white", relief="groove", padding=4)
+        self.cash_val_lbl.grid(row=0, column=1, sticky=tk.E, pady=6, padx=10)
+
+        # 현재 소유한 모든 평가 주식의 자산 가치 총합 행 배치
+        ttk.Label(assets_lf, text="평가 주식 가치 (KRW):", font=("맑은 고딕", 10)).grid(row=1, column=0, sticky=tk.W, pady=6, padx=5)
+        self.stock_val_lbl = ttk.Label(assets_lf, text="0 원", font=("맑은 고딕", 11, "bold"), foreground="#000000", width=22, anchor=tk.E, background="white", relief="groove", padding=4)
+        self.stock_val_lbl.grid(row=1, column=1, sticky=tk.E, pady=6, padx=10)
+
+        # 총 자산 가치(현금 보유고 + 주식 지분 평가금) 행 배치
+        ttk.Label(assets_lf, text="내 총 자산 평가액 (KRW):", font=("맑은 고딕", 10, "bold")).grid(row=2, column=0, sticky=tk.W, pady=6, padx=5)
+        self.total_val_lbl = ttk.Label(assets_lf, text="10,000,000 원", font=("맑은 고딕", 11, "bold"), foreground="#0d6efd", width=22, anchor=tk.E, background="white", relief="groove", padding=4)
+        self.total_val_lbl.grid(row=2, column=1, sticky=tk.E, pady=6, padx=10)
+
+        # -------------------------------------------------------------
+        # [좌측 영역 3] : 매물 거래 주문 접수대 패널 (하단 배너 역할)
+        # -------------------------------------------------------------
+        trade_lf = ttk.LabelFrame(self.left_panel, text=" [3] 가상 매수 / 매도 주문 거래소 ", padding=12)
+        trade_lf.pack(fill=tk.X, pady=10)
+
+        # 거래할 주식의 거래 희망 수량 입력창 배정
+        ttk.Label(trade_lf, text="거래 희망 수량 입력 :", font=("맑은 고딕", 10, "bold")).grid(row=0, column=0, sticky=tk.W, pady=8, padx=5)
+        self.quantity_entry = ttk.Entry(trade_lf, font=("맑은 고딕", 12, "bold"), width=10, justify=tk.CENTER)
+        self.quantity_entry.insert(0, "10")  # 기본 입력 수량을 10주로 기본 세팅해 둡니다.
+        self.quantity_entry.grid(row=0, column=1, sticky=tk.W, pady=8, padx=10)
+        ttk.Label(trade_lf, text="주(Shares)", font=("맑은 고딕", 10)).grid(row=0, column=2, sticky=tk.W, pady=8)
+
+        # 매수 주력 버튼 (계좌 잔고를 소모하여 주식을 사는 적색 테마 배정)
+        self.buy_btn = ttk.Button(trade_lf, text="시장가 즉시 매수 (Buy)", style="AccentBuy.TButton", command=self.execute_buy_shares)
+        self.buy_btn.grid(row=1, column=0, columnspan=2, fill=tk.X, pady=10, padx=5)
+
+        # 매도 주력 버튼 (주주 지분을 양도하고 현금 원화를 징수하는 청록색 테마 배정)
+        self.sell_btn = ttk.Button(trade_lf, text="시장가 즉시 매도 (Sell)", style="AccentSell.TButton", command=self.execute_sell_shares)
+        self.sell_btn.grid(row=1, column=2, columnspan=2, fill=tk.X, pady=10, padx=5)
+
+        # -------------------------------------------------------------
+        # [좌측 영역 4] : 실시간 나의 포트폴리오 디테일 장부 (표 형태 제공)
+        # -------------------------------------------------------------
+        portfolio_lf = ttk.LabelFrame(self.left_panel, text=" [4] 내 주식 보유 잔고 장부 현황 ", padding=10)
+        portfolio_lf.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        # 표 머리글 컬럼 레이아웃 설정
+        columns = ("ticker", "shares", "avg_price", "current_price", "eval_value", "return_rate")
+        self.portfolio_tree = ttk.Treeview(portfolio_lf, columns=columns, show="headings", height=5)
+        
+        # 각 그리드 헤더 이름 한국어 매핑
+        self.portfolio_tree.heading("ticker", text="종목 티커")
+        self.portfolio_tree.heading("shares", text="보유 수량")
+        self.portfolio_tree.heading("avg_price", text="매수 평단가")
+        self.portfolio_tree.heading("current_price", text="현재가(원)")
+        self.portfolio_tree.heading("eval_value", text="평가 금액")
+        self.portfolio_tree.heading("return_rate", text="수익률")
+
+        # 각 컬럼의 너비 조절 및 가운데 정렬 정돈
+        self.portfolio_tree.column("ticker", width=80, anchor=tk.CENTER)
+        self.portfolio_tree.column("shares", width=80, anchor=tk.CENTER)
+        self.portfolio_tree.column("avg_price", width=100, anchor=tk.E)
+        self.portfolio_tree.column("current_price", width=100, anchor=tk.E)
+        self.portfolio_tree.column("eval_value", width=110, anchor=tk.E)
+        self.portfolio_tree.column("return_rate", width=90, anchor=tk.CENTER)
+
+        # 세로 스크롤바 바인딩 연계 제공
+        tree_scroll = ttk.Scrollbar(portfolio_lf, orient=tk.VERTICAL, command=self.portfolio_tree.yview)
+        self.portfolio_tree.configure(yscrollcommand=tree_scroll.set)
+        
+        self.portfolio_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # -------------------------------------------------------------
+        # [우측 영역 1] : 자산 변동 추이를 관장하는 Matplotlib 드로잉 피규어 영역
+        # -------------------------------------------------------------
+        graph_header_lbl = ttk.Label(self.right_panel, text="📈 가상 자산 변동 누적 추이 그래프", style="Title.TLabel")
+        graph_header_lbl.pack(anchor=tk.W, pady=(0, 10))
+
+        # 맷플롯립 피규어 설정 및 프레임에 임베디드 적용
+        self.fig = Figure(figsize=(5, 5), dpi=90)
+        self.ax = self.fig.add_subplot(111)
+        self.fig.tight_layout()
+
+        # Tkinter 연동 매개체인 FigureCanvasTkAgg 위젯을 선언합니다.
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.right_panel)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.pack(fill=tk.BOTH, expand=True)
+
+    def fetch_stock_price(self):
+        """ yfinance 패키지를 호출해 입력된 종목 코드를 실제 야후 서버에서 수신해 현재가를 리턴하는 대목입니다. """
+        ticker_input = self.ticker_entry.get().strip().upper()
+        if not ticker_input:
+            messagebox.showwarning("입력 오류", "조회할 주식 티커를 먼저 입력해 주세요. (예: AAPL)")
+            return
+
+        # 마우스 커서를 로딩 상태(대기 상태)로 일시 변경합니다.
+        self.root.config(cursor="watch")
+        self.root.update()
+
+        try:
+            # yfinance 라이브러리로 입력받은 종목의 Ticker 인스턴스를 확보합니다.
+            stock_info = yf.Ticker(ticker_input)
+            
+            # 종목의 1일 기간 데이터를 다운로드합니다. 이 데이터셋에서 실시간 최종 종가를 획득할 것입니다.
+            historical_data = stock_info.history(period="1d")
+            
+            # 수신 데이터 검증 실패 시 예외를 던져 사용자에게 알립니다.
+            if historical_data.empty:
+                raise ValueError("종목 정보가 불완전하거나 비정상적인 티커명입니다.")
+
+            # 가장 최근 시간대의 종가(Close) 정보를 수신해 보관합니다.
+            self.current_price_usd = float(historical_data['Close'].iloc[-1])
+            # 실시간 연산 적용을 위해 1,350원을 정밀 곱한 원화(KRW) 가치를 실시간으로 산출합니다.
+            self.current_price_krw = round(self.current_price_usd * self.usd_to_krw)
+            # 활성화된 티커 상태를 변경 완료로 표명합니다.
+            self.current_ticker = ticker_input
+
+            # 상단 라벨 문구를 최신 시세 정보로 화끈하게 교체해 줍니다.
+            info_text = f"[{self.current_ticker}] 현재가: {self.current_price_krw:,.0f}원 (${self.current_price_usd:.2f})"
+            self.stock_status_label.configure(text=info_text, foreground="#0d6efd")
+
+        except Exception as err:
+            # 주가 수신 과정에서 비정상적인 인터넷 장애나 코드 에러 발생 시 경고 상자를 발생시켜 줍니다.
+            messagebox.showerror("조회 에러 발생", f"실시간 정보 로드 실패: {err}
+올바른 티커인지 확인 후 인터넷 환경을 점검해 주세요.")
+            self.current_ticker = ""
+            self.current_price_krw = 0.0
+            self.stock_status_label.configure(text="연동 오류: 새로운 티커를 검색해 주세요.", foreground="#dc3545")
+
+        finally:
+            # 기 변형시켰던 마우스 커서의 원형 복구를 마무리해 둡니다.
+            self.root.config(cursor="")
+
+    def update_assets_balance(self):
+        """ 보유 중인 현금 잔액과 소유 지분 가치들의 최신 가액을 집계하여 메인 프레임에 출력하는 업무를 봅니다. """
+        # 먼저, 현재 소유하고 있는 지분들에 대해 실시간 가치 집계를 실행합니다.
+        total_evaluation_value = 0.0
+
+        for ticker, data in self.portfolio.items():
+            # 만약 현재 보고 있는 주식이 현재 검색되어 있다면 그 현재가치를 인용하고,
+            # 아니라면 최초 매칭 평단가를 현재가로 안전하게 갈음하여 초기 밸류에 기여해 둡니다.
+            unit_price = self.current_price_krw if ticker == self.current_ticker else data["avg_price"]
+            # 보유한 수량에 한 개당 평정 단가를 곱해 가상의 시가평가액을 더합니다.
+            total_evaluation_value += data["shares"] * unit_price
+
+        # 회원의 잔존 현금과 주식 평가액을 가산하여 이 시점의 총자산 상태를 구합니다.
+        total_assets_evaluation = self.cash + total_evaluation_value
+
+        # 각각의 프레젠테이션 수동 라벨 위젯에 통화 기호 콤마형식으로 예쁘게 쏴 줍니다.
+        self.cash_val_lbl.configure(text=f"{self.cash:,.0f} 원")
+        self.stock_val_lbl.configure(text=f"{total_evaluation_value:,.0f} 원")
+        self.total_val_lbl.configure(text=f"{total_assets_evaluation:,.0f} 원")
+
+        # 최신 데이터를 기반으로 보유 주식 현황 표(Treeview)를 일괄 업데이트합니다.
+        self.refresh_portfolio_treeview()
+
+    def refresh_portfolio_treeview(self):
+        """ 보유한 포트폴리오를 목록창 일람표 정규 행 정보로 한 줄씩 포맷팅해서 다시 그려줍니다. """
+        # 트리에 등록된 구닥다리 잔존 레코드 목록을 일제히 일괄 청소합니다.
+        for item in self.portfolio_tree.get_children():
+            self.portfolio_tree.delete(item)
+
+        # 자료 구조에 누적해 둔 보유 내역들을 다시 호출합니다.
+        for ticker, info in self.portfolio.items():
+            shares = info["shares"]
+            avg_price = info["avg_price"]
+            
+            # 기 검색된 내역과 맞물리면 실제 실시간 현재가를, 그렇지 못하면 평단가를 임시 현재가 정보로 표출해 둡니다.
+            live_price = self.current_price_krw if ticker == self.current_ticker else avg_price
+            eval_value = shares * live_price
+            
+            # 수익률 계산 ( live_price와 avg_price의 대비비율 산정. 평단가가 0 이상일 때 유효 )
+            if avg_price > 0:
+                return_rate = ((live_price - avg_price) / avg_price) * 100.0
+                rate_text = f"{return_rate:+.2f}%"
+            else:
+                rate_text = "0.00%"
+
+            # 정밀 변형된 데이터를 표 위젯에 추가합니다.
+            self.portfolio_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    ticker,
+                    f"{shares:,}주",
+                    f"{avg_price:,.0f}원",
+                    f"{live_price:,.0f}원",
+                    f"{eval_value:,.0f}원",
+                    rate_text
+                )
+            )
+
+    def execute_buy_shares(self):
+        """ 지정 수량을 보유한 예수금을 차감하고 주권 포트폴리오에 취득하는 매수 핵심 연산 기능입니다. """
+        # 1) 사전에 종목 시세 자료가 정확히 활성화돼 취득됐는지의 선제적 확인을 수행합니다.
+        if not self.current_ticker or self.current_price_krw <= 0:
+            messagebox.showwarning("주의 요망", "먼저 주식 티커를 성공적으로 검색해 현재가를 확인해 주세요!")
+            return
+
+        # 2) 사용자가 타이핑해 놓은 희망 거래 수량을 분석 유효화합니다.
+        try:
+            qty = int(self.quantity_entry.get().strip())
+            if qty <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("수량 오류", "구매할 주식 수량은 1 이상의 정수값만 지정하실 수 있습니다.")
+            return
+
+        # 3) 이번 매매 거래를 치르는 데 소요되는 총 요구 대금 명세를 계산합니다.
+        total_payment_needed = self.current_price_krw * qty
+
+        # 4) 예비 투자자가 보유 자금을 초과해 무리한 신용 매수를 청구했는지를 검출합니다.
+        if total_payment_needed > self.cash:
+            messagebox.showerror("잔액 부족", f"가용 예수금이 부족해 매수를 이행할 수 없습니다!
+구매 비용: {total_payment_needed:,.0f}원
+남은 예수금: {self.cash:,.0f}원")
+            return
+
+        # 5) 자산 계정 장부에 해당 수취 거래 내역을 실무적으로 정밀 가산 조정합니다.
+        self.cash -= total_payment_needed  # 지출 대금만큼 현금 계좌 차감 고지
+
+        # 포트폴리오 갱신 연산 (가중 평균 단가 공식을 써서 가상 평단가를 보정합니다)
+        if self.current_ticker in self.portfolio:
+            stored_item = self.portfolio[self.current_ticker]
+            original_shares = stored_item["shares"]
+            original_avg_price = stored_item["avg_price"]
+            
+            # 누적 가용 주식 수
+            new_shares = original_shares + qty
+            # 가중 평균 단가(Weighted Average Purchase Price) 산정 공식적 응용
+            new_avg_price = ((original_shares * original_avg_price) + total_payment_needed) / new_shares
+            
+            # 가액 기재 갱신
+            self.portfolio[self.current_ticker] = {
+                "shares": new_shares,
+                "avg_price": round(new_avg_price)
+            }
+        else:
+            # 신규 소유 진입 시 그대로 입력 단가 투사
+            self.portfolio[self.current_ticker] = {
+                "shares": qty,
+                "avg_price": self.current_price_krw
+            }
+
+        # 6) 계정 현황 재해석 및 우측 그래프 기록 추가 단계를 밟습니다.
+        self.record_asset_step()
+        self.update_assets_balance()
+        self.update_matplotlib_chart()
+
+        # 7) 매수 성공 보고 팝업창을 송출합니다.
+        messagebox.showinfo("체결 완료", f"[{self.current_ticker}] {qty}주 매수가 긴급 체결되었습니다!
+총 투입금액: {total_payment_needed:,.0f}원")
+
+    def execute_sell_shares(self):
+        """ 취득하고 있던 지권을 청산하여 대가 현금을 금고 계정에 회수시키는 매도 이행 연산입니다. """
+        # 1) 티커 데이터 취득 상태 여부를 선제 검증합니다.
+        if not self.current_ticker or self.current_price_krw <= 0:
+            messagebox.showwarning("주의 요망", "먼저 현재가를 검색 파악한 상태에서 매도를 추진하셔야 합니다!")
+            return
+
+        # 2) 사용자가 타이핑해 입고해 둔 거래 수량 문자열의 무결성에 접근합니다.
+        try:
+            qty = int(self.quantity_entry.get().strip())
+            if qty <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("수량 오류", "처분할 주식 수량은 1 이상의 양의 정수 형식이어야 합니다.")
+            return
+
+        # 3) 현재 본인이 정말로 그 주를 과거 기 매수해 들고 있었는지부터 전격 파악해 나갑니다.
+        if self.current_ticker not in self.portfolio or self.portfolio[self.current_ticker]["shares"] <= 0:
+            messagebox.showerror("매도 불가", f"고객님께서는 현재 [{self.current_ticker}] 종목을 일절 점유하고 있지 않습니다.")
+            return
+
+        owned_shares = self.portfolio[self.current_ticker]["shares"]
+        # 4) 들고 있는 주식 수량보다 무리하게 많은 오버 수량을 도려내 팔려 하는지를 체크합니다.
+        if qty > owned_shares:
+            messagebox.showerror("수량 부족", f"보유 수량을 유실해 초과 처분은 불가합니다!
+현재 소유중인 지분수: {owned_shares}주
+요청하신 매도수: {qty}주")
+            return
+
+        # 5) 상환 보상 가액을 정제 계산해 계정 가액 조정 조작에 돌입합니다.
+        total_recovery_cash = self.current_price_krw * qty
+        self.cash += total_recovery_cash  # 거래 회수 현금 지갑에 누적 입금
+        
+        # 보유 주식 수량 뺄셈 연산 전개
+        self.portfolio[self.current_ticker]["shares"] -= qty
+
+        # 만약 소유했던 주수가 0에 달하면, 계좌 잔고 장부 색인에서 말소하여 표의 여백 공간을 깨끗하게 회수시킵니다.
+        if self.portfolio[self.current_ticker]["shares"] == 0:
+            del self.portfolio[self.current_ticker]
+
+        # 6) 데이터 흐름 누적 처리 및 디스플레이 전면 갱신에 착수합니다.
+        self.record_asset_step()
+        self.update_assets_balance()
+        self.update_matplotlib_chart()
+
+        # 7) 체결 보고 팝업 알람창 송출
+        messagebox.showinfo("체결 완료", f"[{self.current_ticker}] {qty}주 매도 청산이 체결되었습니다!
+회수된 현금: {total_recovery_cash:,.0f}원")
+
+    def record_asset_step(self):
+        """ 거래 성사 직후 마다 자산 잔재 가치 일체를 산재 계산해 그래프 기록 가용 리스트에 보존하는 장치입니다. """
+        self.trade_counter += 1
+        self.time_steps.append(self.trade_counter)
+
+        # 이번 횟수의 가상 시점 자산 가액 일체를 즉각 역추적 계산합니다.
+        total_live_value = 0.0
+        for tick, dat in self.portfolio.items():
+            u_price = self.current_price_krw if tick == self.current_ticker else dat["avg_price"]
+            total_live_value += dat["shares"] * u_price
+        
+        current_combined_worth = self.cash + total_live_value
+        # 시뮬레이터 차트 데이터 집합 배열에 소중히 순서대로 밀어넣습니다.
+        self.asset_history.append(current_combined_worth)
+
+    def update_matplotlib_chart(self):
+        """ Matplotlib 드로잉 객체를 초기화한 뒤 데이터 요소들을 토대로 최신 자산 추이 그래프를 재작성합니다. """
+        # 1) 이전에 맷플롯립 도표 도면 위에 그려져 있던 찌꺼기 선 드로잉을 완전 초기화시킵니다.
+        self.ax.clear()
+
+        # 2) 꺾은선 자산 그래프(Line Chart)를 세련되게 작성합니다 (파란색 메인 선 구성)
+        self.ax.plot(self.time_steps, self.asset_history, marker='o', markersize=6, linestyle='-', linewidth=2, color='#0d6efd', label="내 총 가상 자산액(원)")
+
+        # 3) 그래프 상의 이정표 격인 축 네임 라벨들과 제목 문자열을 지정해 올립니다.
+        self.ax.set_title("가상 투자 자산 평가액 누적 흐름 추이", fontsize=12, fontweight='bold', pad=10)
+        self.ax.set_xlabel("거래 진행 횟수 (주문 체결 이력순)", fontsize=9, labelpad=5)
+        self.ax.set_ylabel("평가 가치 총합 (원화: ₩)", fontsize=9, labelpad=5)
+        
+        # 4) 숫자가 단위가 커졌으므로 Y축 숫자들을 알아보기 쉽게 십만/백만 단위 통화 포맷으로 보정합니다.
+        self.ax.get_yaxis().set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, p: f"{x:,.0f}"))
+        # X축을 소수점이 없는 깨끗한 거래 정수 번호들로 주석 세팅 배열해 둡니다.
+        self.ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+
+        # 5) 그래프 내 격자 가이드선(Grid Line)을 옅은 회색 점선으로 장입합니다.
+        self.ax.grid(True, linestyle='--', alpha=0.5, color="#ced4da")
+        self.ax.legend(loc="upper left", frameon=True, facecolor="#ffffff", edgecolor="#e9ecef")
+
+        # 6) 최근 그려준 변형 추세를 캔버스 객체에 신호화해서 화면 UI에 새로 갱신 표방합니다.
+        self.canvas.draw()
+
+# ----------------- 파이썬 프로그램의 실제 최초 로딩 기동점 정의 -----------------
+if __name__ == "__main__":
+    # Tkinter 메인 루트 윈도우 인스턴스를 확보합니다.
+    window = tk.Tk()
+    
+    # 우리가 제작하고 정렬한 시뮬레이션 클래스 생성자를 주입 실행합니다.
+    app = StockSimulator(window)
+    
+    # 윈도우가 소멸하여 꺼질 때까지 끊임없이 사용자 입력을 대기하는 메인 루프를 활성화합니다.
+    window.mainloop()
