@@ -19,3 +19,7 @@
 2. Google Colab에서 새 노트북을 열고 코드 셀 하나에 붙여넣은 뒤 실행합니다. 필요한 패키지가 없으면 자동으로 설치합니다.
 
 기록은 실행 환경의 `budget_records.json`에 저장됩니다. Colab 런타임이 초기화되기 전에 파일을 내려받으면 다음 세션에 다시 올려 이어서 사용할 수 있습니다.
+
+## Colab에서 주식 시뮬레이션 실행하기
+
+[복사용 파이썬 코드](https://raw.githubusercontent.com/sdfdsfhrh/python-project_app-develop/main/stock_colab.py) 전체를 Colab 코드 셀 하나에 붙여넣고 실행합니다. `AAPL` 같은 미국 종목을 입력하고 **가격 조회**를 누른 뒤 수량을 골라 가상 매수·매도를 해 볼 수 있습니다. 거래는 런타임이 유지되는 동안 기록됩니다.
