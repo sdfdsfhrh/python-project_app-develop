@@ -3,6 +3,7 @@ import importlib.util
 import math
 import subprocess
 import sys
+from unicodedata import normalize
 from datetime import datetime
 
 missing = [name for name in ("ipywidgets", "yfinance") if importlib.util.find_spec(name) is None]
@@ -36,7 +37,7 @@ class StockSimulator:
                                   self.ticker, self.quantity, widgets.HBox(buttons), self.result])
 
     def lookup(self, _):
-        symbol = self.ticker.value.strip().upper()
+        symbol = "".join(normalize("NFKC", self.ticker.value).split()).upper()
         if not symbol:
             self.render("종목 코드를 입력하세요.")
             return
@@ -60,7 +61,7 @@ class StockSimulator:
         self.trade(-self.quantity.value)
 
     def trade(self, quantity):
-        symbol = self.ticker.value.strip().upper()
+        symbol = "".join(normalize("NFKC", self.ticker.value).split()).upper()
         if symbol not in self.quotes:
             self.render("먼저 해당 종목의 가격을 조회하세요.")
             return

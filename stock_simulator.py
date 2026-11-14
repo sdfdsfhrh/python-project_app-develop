@@ -7,6 +7,7 @@
 """
 
 import sys
+from unicodedata import normalize
 import math
 from datetime import datetime
 import tkinter as tk
@@ -211,7 +212,7 @@ class StockSimulator:
 
     def fetch_stock_price(self):
         """ yfinance 패키지를 호출해 입력된 종목 코드를 실제 야후 서버에서 수신해 현재가를 리턴하는 대목입니다. """
-        ticker_input = self.ticker_entry.get().strip().upper()
+        ticker_input = "".join(normalize("NFKC", self.ticker_entry.get()).split()).upper()
         if not ticker_input:
             messagebox.showwarning("입력 오류", "조회할 주식 티커를 먼저 입력해 주세요. (예: AAPL)")
             return
