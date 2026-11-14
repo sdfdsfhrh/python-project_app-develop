@@ -7,6 +7,8 @@
 """
 
 import sys
+import math
+from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 import yfinance as yf
@@ -33,6 +35,7 @@ class StockSimulator:
 
         # 2. 투자 시뮬레이션의 핵심 자산 데이터 변수들을 생성합니다.
         self.cash = 10000000  # 가상 시드머니 초기값: 10,000,000원(원화)으로 세팅합니다.
+        self.latest_prices = {}
         self.portfolio = {}   # 보유 주식을 기록할 딕셔너리 저장소 (예: {'AAPL': {'shares': 10, 'avg_price': 210000}})
         
         # 3. 우측 Matplotlib 그래프에 기록될 자산 변동 히스토리 목록들입니다.
@@ -107,7 +110,7 @@ class StockSimulator:
         self.ticker_entry.pack(side=tk.LEFT, padx=5)
 
         # 실시간 시세 조회 이벤트 트리거 버튼 배치
-        self.search_btn = ttk.Button(search_lf, text="실시간 주가 조회 🔍", style="Primary.TButton", command=self.fetch_stock_price)
+        self.search_btn = ttk.Button(search_lf, text="최근 주가 조회 🔍", style="Primary.TButton", command=self.fetch_stock_price)
         self.search_btn.pack(side=tk.LEFT, padx=8)
 
         # 현재 수신된 해당 종목의 가격 단가를 동적으로 화면에 안내해 줄 라벨틀입니다.
@@ -222,27 +225,32 @@ class StockSimulator:
             stock_info = yf.Ticker(ticker_input)
             
             # 종목의 1일 기간 데이터를 다운로드합니다. 이 데이터셋에서 실시간 최종 종가를 획득할 것입니다.
-            historical_data = stock_info.history(period="1d")
+            historical_data = stock_info.history(period="5d", auto_adjust=False, timeout=5)
             
             # 수신 데이터 검증 실패 시 예외를 던져 사용자에게 알립니다.
             if historical_data.empty:
                 raise ValueError("종목 정보가 불완전하거나 비정상적인 티커명입니다.")
 
             # 가장 최근 시간대의 종가(Close) 정보를 수신해 보관합니다.
-            self.current_price_usd = float(historical_data['Close'].iloc[-1])
+            price = float(historical_data['Close'].dropna().iloc[-1])
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError("유효한 가격 없음")
+            self.current_price_usd = price
             # 실시간 연산 적용을 위해 1,350원을 정밀 곱한 원화(KRW) 가치를 실시간으로 산출합니다.
             self.current_price_krw = round(self.current_price_usd * self.usd_to_krw)
             # 활성화된 티커 상태를 변경 완료로 표명합니다.
             self.current_ticker = ticker_input
+            self.latest_prices[ticker_input] = self.current_price_krw
+            self.refresh_portfolio_treeview()
+            self.update_assets_balance()
 
             # 상단 라벨 문구를 최신 시세 정보로 화끈하게 교체해 줍니다.
-            info_text = f"[{self.current_ticker}] 현재가: {self.current_price_krw:,.0f}원 (${self.current_price_usd:.2f})"
+            info_text = f"[{self.current_ticker}] 최근 가격: {self.current_price_krw:,.0f}원 · 조회 {datetime.now():%m/%d %H:%M} · 적용 환율 {self.usd_to_krw:,.0f}원/USD"
             self.stock_status_label.configure(text=info_text, foreground="#0d6efd")
 
         except Exception as err:
             # 주가 수신 과정에서 비정상적인 인터넷 장애나 코드 에러 발생 시 경고 상자를 발생시켜 줍니다.
-            messagebox.showerror("조회 에러 발생", f"실시간 정보 로드 실패: {err}
-올바른 티커인지 확인 후 인터넷 환경을 점검해 주세요.")
+            messagebox.showerror("조회 에러 발생", f"실시간 정보 로드 실패: {err}\n올바른 티커인지 확인 후 인터넷 환경을 점검해 주세요.")
             self.current_ticker = ""
             self.current_price_krw = 0.0
             self.stock_status_label.configure(text="연동 오류: 새로운 티커를 검색해 주세요.", foreground="#dc3545")
@@ -259,7 +267,7 @@ class StockSimulator:
         for ticker, data in self.portfolio.items():
             # 만약 현재 보고 있는 주식이 현재 검색되어 있다면 그 현재가치를 인용하고,
             # 아니라면 최초 매칭 평단가를 현재가로 안전하게 갈음하여 초기 밸류에 기여해 둡니다.
-            unit_price = self.current_price_krw if ticker == self.current_ticker else data["avg_price"]
+            unit_price = self.latest_prices.get(ticker, data["avg_price"])
             # 보유한 수량에 한 개당 평정 단가를 곱해 가상의 시가평가액을 더합니다.
             total_evaluation_value += data["shares"] * unit_price
 
@@ -286,7 +294,7 @@ class StockSimulator:
             avg_price = info["avg_price"]
             
             # 기 검색된 내역과 맞물리면 실제 실시간 현재가를, 그렇지 못하면 평단가를 임시 현재가 정보로 표출해 둡니다.
-            live_price = self.current_price_krw if ticker == self.current_ticker else avg_price
+            live_price = self.latest_prices.get(ticker, avg_price)
             eval_value = shares * live_price
             
             # 수익률 계산 ( live_price와 avg_price의 대비비율 산정. 평단가가 0 이상일 때 유효 )
@@ -331,9 +339,7 @@ class StockSimulator:
 
         # 4) 예비 투자자가 보유 자금을 초과해 무리한 신용 매수를 청구했는지를 검출합니다.
         if total_payment_needed > self.cash:
-            messagebox.showerror("잔액 부족", f"가용 예수금이 부족해 매수를 이행할 수 없습니다!
-구매 비용: {total_payment_needed:,.0f}원
-남은 예수금: {self.cash:,.0f}원")
+            messagebox.showerror("잔액 부족", f"가용 예수금이 부족해 매수를 이행할 수 없습니다!\n구매 비용: {total_payment_needed:,.0f}원\n남은 예수금: {self.cash:,.0f}원")
             return
 
         # 5) 자산 계정 장부에 해당 수취 거래 내역을 실무적으로 정밀 가산 조정합니다.
@@ -368,8 +374,7 @@ class StockSimulator:
         self.update_matplotlib_chart()
 
         # 7) 매수 성공 보고 팝업창을 송출합니다.
-        messagebox.showinfo("체결 완료", f"[{self.current_ticker}] {qty}주 매수가 긴급 체결되었습니다!
-총 투입금액: {total_payment_needed:,.0f}원")
+        messagebox.showinfo("체결 완료", f"[{self.current_ticker}] {qty}주 매수가 긴급 체결되었습니다!\n총 투입금액: {total_payment_needed:,.0f}원")
 
     def execute_sell_shares(self):
         """ 취득하고 있던 지권을 청산하여 대가 현금을 금고 계정에 회수시키는 매도 이행 연산입니다. """
@@ -395,9 +400,7 @@ class StockSimulator:
         owned_shares = self.portfolio[self.current_ticker]["shares"]
         # 4) 들고 있는 주식 수량보다 무리하게 많은 오버 수량을 도려내 팔려 하는지를 체크합니다.
         if qty > owned_shares:
-            messagebox.showerror("수량 부족", f"보유 수량을 유실해 초과 처분은 불가합니다!
-현재 소유중인 지분수: {owned_shares}주
-요청하신 매도수: {qty}주")
+            messagebox.showerror("수량 부족", f"보유 수량을 유실해 초과 처분은 불가합니다!\n현재 소유중인 지분수: {owned_shares}주\n요청하신 매도수: {qty}주")
             return
 
         # 5) 상환 보상 가액을 정제 계산해 계정 가액 조정 조작에 돌입합니다.
@@ -417,8 +420,7 @@ class StockSimulator:
         self.update_matplotlib_chart()
 
         # 7) 체결 보고 팝업 알람창 송출
-        messagebox.showinfo("체결 완료", f"[{self.current_ticker}] {qty}주 매도 청산이 체결되었습니다!
-회수된 현금: {total_recovery_cash:,.0f}원")
+        messagebox.showinfo("체결 완료", f"[{self.current_ticker}] {qty}주 매도 청산이 체결되었습니다!\n회수된 현금: {total_recovery_cash:,.0f}원")
 
     def record_asset_step(self):
         """ 거래 성사 직후 마다 자산 잔재 가치 일체를 산재 계산해 그래프 기록 가용 리스트에 보존하는 장치입니다. """
@@ -428,7 +430,7 @@ class StockSimulator:
         # 이번 횟수의 가상 시점 자산 가액 일체를 즉각 역추적 계산합니다.
         total_live_value = 0.0
         for tick, dat in self.portfolio.items():
-            u_price = self.current_price_krw if tick == self.current_ticker else dat["avg_price"]
+            u_price = self.latest_prices.get(tick, dat["avg_price"])
             total_live_value += dat["shares"] * u_price
         
         current_combined_worth = self.cash + total_live_value
