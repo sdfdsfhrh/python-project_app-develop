@@ -154,11 +154,11 @@ class StockSimulator:
 
         # 매수 주력 버튼 (계좌 잔고를 소모하여 주식을 사는 적색 테마 배정)
         self.buy_btn = ttk.Button(trade_lf, text="시장가 즉시 매수 (Buy)", style="AccentBuy.TButton", command=self.execute_buy_shares)
-        self.buy_btn.grid(row=1, column=0, columnspan=2, fill=tk.X, pady=10, padx=5)
+        self.buy_btn.grid(row=1, column=0, columnspan=2, sticky="ew", pady=10, padx=5)
 
         # 매도 주력 버튼 (주주 지분을 양도하고 현금 원화를 징수하는 청록색 테마 배정)
         self.sell_btn = ttk.Button(trade_lf, text="시장가 즉시 매도 (Sell)", style="AccentSell.TButton", command=self.execute_sell_shares)
-        self.sell_btn.grid(row=1, column=2, columnspan=2, fill=tk.X, pady=10, padx=5)
+        self.sell_btn.grid(row=1, column=2, columnspan=2, sticky="ew", pady=10, padx=5)
 
         # -------------------------------------------------------------
         # [좌측 영역 4] : 실시간 나의 포트폴리오 디테일 장부 (표 형태 제공)
